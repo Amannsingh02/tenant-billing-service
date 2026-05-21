@@ -29,6 +29,9 @@ def create_app() -> FastAPI:
             await session.execute(text("SELECT 1"))
             return {"status": "ok", "database": "reachable"}
 
+    from app.routers.customers import router as customers_router
+    app.include_router(customers_router)
+
     return app
 
 

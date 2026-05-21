@@ -1,26 +1,37 @@
-from fastapi import HTTPException
+"""
+Exception hierarchy.
+
+Domain exceptions (no FastAPI/HTTP knowledge) live here.
+Routers catch them and translate to HTTP responses.
+This separation keeps services testable without HTTP.
+"""
 
 
-class InvalidStateTransition(Exception):
-    """Raised when an invoice state transition is not allowed."""
+class AppError(Exception):
+    """Base for all domain exceptions."""
     pass
 
 
-class IdempotencyConflict(Exception):
-    """Raised when an idempotency key is reused with a different request body."""
-    pass
+class NotFoundError(AppError):
+    def __init__(self, resource: str, resource_id=None):
+        self.resource = resource
+        self.resource_id = resource_id
+        super().__init__(f"{resource} not found" + (f": {resource_id}" if resource_id else ""))
 
 
-class BusinessNotFound(HTTPException):
+class ConflictError(AppError):
+    def __init__(self, message: str):
+        self.message = message
+        super().__init__(message)
+
+
+class InvalidStateTransition(AppError):
+    def __init__(self, from_state: str, to_state: str):
+        self.from_state = from_state
+        self.to_state = to_state
+        super().__init__(f"Cannot transition from '{from_state}' to '{to_state}'")
+
+
+class IdempotencyConflict(AppError):
     def __init__(self):
-        super().__init__(status_code=404, detail="Business not found")
-
-
-class InvoiceNotFound(HTTPException):
-    def __init__(self):
-        super().__init__(status_code=404, detail="Invoice not found")
-
-
-class CustomerNotFound(HTTPException):
-    def __init__(self):
-        super().__init__(status_code=404, detail="Customer not found")
+        super().__init__("Idempotency key reused with different request body")
