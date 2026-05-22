@@ -33,9 +33,11 @@ def create_app() -> FastAPI:
 
     from app.routers.customers import router as customers_router
     from app.routers.invoices import router as invoices_router
+    from app.routers.payments import router as payments_router
 
     app.include_router(customers_router)
     app.include_router(invoices_router)
+    app.include_router(payments_router)
 
     return app
 

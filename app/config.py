@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     DATABASE_URL_SYNC: str = Field(...)
     REDIS_URL: str = Field(default="redis://redis:6379/0")
     PSP_URL: str = Field(default="http://mock_psp:8001/charge")
+    PSP_TIMEOUT_SECONDS: int = Field(default=12)
     SECRET_KEY: str = Field(...)
     API_KEY_PREFIX: str = Field(default="sk_live_")
     APP_NAME: str = Field(default="tenant-billing-service")

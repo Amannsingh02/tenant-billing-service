@@ -35,5 +35,19 @@ class InvalidStateTransition(AppError):
 
 
 class IdempotencyConflict(AppError):
+    """Same idempotency key reused with a different request body."""
     def __init__(self):
         super().__init__("Idempotency key reused with different request body")
+
+
+class MissingIdempotencyKey(AppError):
+    """Idempotency-Key header was not provided."""
+    def __init__(self):
+        super().__init__("Idempotency-Key header is required")
+
+
+class PSPError(AppError):
+    """PSP returned a non-business error (network, timeout, 5xx)."""
+    def __init__(self, message: str):
+        self.message = message
+        super().__init__(message)
