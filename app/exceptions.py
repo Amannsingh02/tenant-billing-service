@@ -3,12 +3,10 @@ Exception hierarchy.
 
 Domain exceptions (no FastAPI/HTTP knowledge) live here.
 Routers catch them and translate to HTTP responses.
-This separation keeps services testable without HTTP.
 """
 
 
 class AppError(Exception):
-    """Base for all domain exceptions."""
     pass
 
 
@@ -16,7 +14,9 @@ class NotFoundError(AppError):
     def __init__(self, resource: str, resource_id=None):
         self.resource = resource
         self.resource_id = resource_id
-        super().__init__(f"{resource} not found" + (f": {resource_id}" if resource_id else ""))
+        super().__init__(
+            f"{resource} not found" + (f": {resource_id}" if resource_id else "")
+        )
 
 
 class ConflictError(AppError):
@@ -26,10 +26,12 @@ class ConflictError(AppError):
 
 
 class InvalidStateTransition(AppError):
-    def __init__(self, from_state: str, to_state: str):
+    def __init__(self, from_state: str, to_state: str, reason: str | None = None):
         self.from_state = from_state
         self.to_state = to_state
-        super().__init__(f"Cannot transition from '{from_state}' to '{to_state}'")
+        self.reason = reason
+        msg = reason or f"cannot transition from '{from_state}' to '{to_state}'"
+        super().__init__(msg)
 
 
 class IdempotencyConflict(AppError):

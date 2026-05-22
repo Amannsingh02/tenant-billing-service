@@ -54,4 +54,5 @@ async def get_customer(
         customer = await customer_service.get_customer(db, business, customer_id)
         return CustomerRead.model_validate(customer)
     except NotFoundError:
-        raise HTTPException(status_code=404, detail="Customer not found")
+        raise HTTPException(status_code=404, detail="Customer not found for this business")
+    

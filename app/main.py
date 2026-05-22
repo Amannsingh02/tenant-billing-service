@@ -1,6 +1,8 @@
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from sqlalchemy import text
+
 from app.config import get_settings
 from app.database import get_db
 
@@ -30,7 +32,10 @@ def create_app() -> FastAPI:
             return {"status": "ok", "database": "reachable"}
 
     from app.routers.customers import router as customers_router
+    from app.routers.invoices import router as invoices_router
+
     app.include_router(customers_router)
+    app.include_router(invoices_router)
 
     return app
 

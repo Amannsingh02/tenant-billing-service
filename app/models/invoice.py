@@ -1,12 +1,15 @@
 import enum
 import uuid
 from datetime import date, datetime
+from typing import List
+
 from sqlalchemy import (
     BigInteger, CheckConstraint, Date, DateTime,
     ForeignKey, Index, Integer, String, func,
 )
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 from app.database import Base
 
 
@@ -32,10 +35,15 @@ class Invoice(Base):
         UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
     )
     business_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True),
+        ForeignKey("businesses.id", ondelete="CASCADE"),
+        nullable=False,
     )
     customer_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("customers.id", ondelete="RESTRICT"), nullable=False, index=True
+        UUID(as_uuid=True),
+        ForeignKey("customers.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
     )
     state: Mapped[str] = mapped_column(
         String(20), nullable=False, server_default=InvoiceState.DRAFT.value
@@ -47,6 +55,15 @@ class Invoice(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    # One-way relationship — only navigate Invoice -> line_items, never the reverse.
+    # lazy="raise" prevents accidental implicit async queries.
+    # Must use selectinload() explicitly when you need line items.
+    line_items: Mapped[List["InvoiceLineItem"]] = relationship(
+        "InvoiceLineItem",
+        lazy="raise",
+        cascade="all, delete-orphan",
     )
 
     __table_args__ = (
@@ -70,7 +87,10 @@ class InvoiceLineItem(Base):
         UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
     )
     invoice_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False, index=True
+        UUID(as_uuid=True),
+        ForeignKey("invoices.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     description: Mapped[str] = mapped_column(String(500), nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -83,7 +103,10 @@ class InvoiceLineItem(Base):
     __table_args__ = (
         CheckConstraint("quantity > 0", name="ck_line_items_qty_positive"),
         CheckConstraint("unit_amount_cents >= 0", name="ck_line_items_unit_amount_nonneg"),
-        CheckConstraint("amount_cents = quantity * unit_amount_cents", name="ck_line_items_amount_matches"),
+        CheckConstraint(
+            "amount_cents = quantity * unit_amount_cents",
+            name="ck_line_items_amount_matches",
+        ),
     )
 
     def __repr__(self) -> str:
