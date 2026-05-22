@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.exceptions import ConflictError, NotFoundError
+from app.exceptions import NotFoundError
 from app.models.business import Business
 from app.models.customer import Customer
 from app.models.invoice import Invoice, InvoiceLineItem, InvoiceState
@@ -23,7 +23,6 @@ async def create_invoice(
     business: Business,
     payload: InvoiceCreate,
 ) -> Invoice:
-    # Verify customer belongs to this business
     result = await session.execute(
         select(Customer).where(
             Customer.id == payload.customer_id,
@@ -32,9 +31,8 @@ async def create_invoice(
     )
     customer = result.scalar_one_or_none()
     if customer is None:
-        raise NotFoundError("Customer", payload.customer_id)
+        raise NotFoundError("Customer")
 
-    # Compute total server-side — never trust the client
     total_cents = sum(
         li.quantity * li.unit_amount_cents for li in payload.line_items
     )
@@ -47,7 +45,7 @@ async def create_invoice(
         due_date=payload.due_date,
     )
     session.add(invoice)
-    await session.flush()  # get invoice.id from DB
+    await session.flush()
 
     for li in payload.line_items:
         amount_cents = li.quantity * li.unit_amount_cents
@@ -62,7 +60,20 @@ async def create_invoice(
 
     await session.flush()
 
-    # Reload with line_items eagerly so caller can access them
+    # Enqueue webhook in the SAME transaction — rolls back if caller rolls back
+    from app.services import webhook_service
+    await webhook_service.enqueue_event(
+        db=session,
+        business_id=business.id,
+        event_type="invoice.created",
+        payload={
+            "id": str(invoice.id),
+            "customer_id": str(invoice.customer_id),
+            "state": invoice.state,
+            "total_cents": invoice.total_cents,
+        },
+    )
+
     result = await session.execute(
         select(Invoice)
         .options(selectinload(Invoice.line_items))
@@ -86,7 +97,7 @@ async def get_invoice(
     )
     invoice = result.scalar_one_or_none()
     if invoice is None:
-        raise NotFoundError("Invoice", invoice_id)
+        raise NotFoundError("Invoice")
     return invoice
 
 
@@ -124,16 +135,11 @@ async def transition_invoice_state(
     invoice_id: uuid.UUID,
     target_state: InvoiceState,
 ) -> Invoice:
-    # Use get_invoice to ensure business scoping
     invoice = await get_invoice(session, business, invoice_id)
-
-    # Raises InvalidStateTransition if not allowed
     assert_transition_allowed(invoice.state, target_state)
-
     invoice.state = target_state.value
     await session.flush()
 
-    # Reload with line items
     result = await session.execute(
         select(Invoice)
         .options(selectinload(Invoice.line_items))

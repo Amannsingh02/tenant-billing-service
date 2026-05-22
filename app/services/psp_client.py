@@ -1,63 +1,108 @@
 """
-PSP HTTP client.
+Mock PSP HTTP client.
 
-Translates the PSP wire protocol into Python types.
-Surfaces typed exceptions so payment_service can handle
-business failures vs infrastructure failures differently.
+A thin wrapper around httpx. The PSP is treated as an external service —
+configurable URL, explicit timeout, typed exceptions.
 
-Business failure (card_declined, insufficient_funds):
-    PSPChargeResponse with status='failed' and a code.
-    Invoice stays open. Customer can retry with a different card.
-
-Infrastructure failure (timeout, 5xx):
-    Raises PSPError.
-    Attempt stays pending. Invoice stays open.
+Three outcomes the payment service must distinguish:
+ - Business outcome: PSP returned a clean 2xx response, succeeded or failed
+   (card declined, insufficient funds). Modeled as PSPChargeResult.
+ - Timeout: PSP didn't respond in time (tok_timeout sleeps 30s).
+   Raises PSPTimeout. Payment stays pending.
+ - Network/HTTP error: PSP returned 4xx/5xx, connection refused, etc
+   (tok_network_error). Raises PSPNetworkError. Payment stays pending.
 """
+
+from dataclasses import dataclass
+from typing import Literal
+
 import httpx
 
 from app.config import get_settings
-from app.exceptions import PSPError
-
-settings = get_settings()
 
 
-class PSPChargeResponse:
-    def __init__(self, status: str, psp_ref: str | None, code: str | None):
-        self.status = status      # "succeeded" or "failed"
-        self.psp_ref = psp_ref    # filled on success
-        self.code = code          # filled on business failure
+# ----------------------------------------------------------------------------
+# Exception hierarchy
+# ----------------------------------------------------------------------------
+
+class PSPError(Exception):
+    """Base class for PSP-related failures (NOT business failures)."""
 
 
-async def charge(card_token: str, amount_cents: int, idempotency_key: str) -> PSPChargeResponse:
+class PSPTimeout(PSPError):
+    """PSP did not respond before our configured timeout."""
+
+
+class PSPNetworkError(PSPError):
+    """PSP returned a non-2xx status or the connection failed."""
+
+
+# ----------------------------------------------------------------------------
+# Result type for clean responses
+# ----------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class PSPChargeResult:
+    """A clean response from the PSP — either succeeded or business-failed."""
+
+    status: Literal["succeeded", "failed"]
+    psp_ref: str | None = None
+    code: str | None = None  # failure code on business failures (e.g. card_declined)
+
+
+# ----------------------------------------------------------------------------
+# Public API
+# ----------------------------------------------------------------------------
+
+async def charge(
+    card_token: str,
+    amount_cents: int,
+    idempotency_key: str | None = None,
+) -> PSPChargeResult:
     """
-    Call the PSP charge endpoint.
+    Call the mock PSP to charge a card.
 
-    Timeout is set explicitly — tok_timeout sleeps 30s on the PSP side.
-    We cut it off at PSP_TIMEOUT_SECONDS (default 12) and surface PSPError.
-    The caller leaves the attempt as pending and returns 202.
+    Returns:
+        PSPChargeResult — for any clean 2xx response (succeeded or failed).
+
+    Raises:
+        PSPTimeout — request timed out (tok_timeout case).
+        PSPNetworkError — HTTP 4xx/5xx or connection failure (tok_network_error).
     """
-    payload = {
+
+    settings = get_settings()
+
+    payload: dict = {
         "card_token": card_token,
         "amount_cents": amount_cents,
-        "idempotency_key": idempotency_key,
     }
+
+    if idempotency_key is not None:
+        payload["idempotency_key"] = idempotency_key
 
     try:
         async with httpx.AsyncClient(timeout=settings.PSP_TIMEOUT_SECONDS) as client:
             response = await client.post(settings.PSP_URL, json=payload)
-            response.raise_for_status()
-            data = response.json()
-            return PSPChargeResponse(
-                status=data.get("status", "failed"),
-                psp_ref=data.get("psp_ref"),
-                code=data.get("code"),
-            )
 
-    except httpx.TimeoutException:
-        raise PSPError("psp_timeout")
-
-    except httpx.HTTPStatusError as e:
-        raise PSPError(f"psp_unavailable: HTTP {e.response.status_code}")
+    except httpx.TimeoutException as e:
+        raise PSPTimeout(f"PSP did not respond within timeout: {e}") from e
 
     except httpx.RequestError as e:
-        raise PSPError(f"psp_unavailable: {str(e)}")
+        # Connection refused, DNS failure, broken socket, etc.
+        raise PSPNetworkError(f"PSP connection failed: {e}") from e
+
+    # Treat both 4xx and 5xx the same: we can't proceed and don't know the
+    # transaction state. Leaves the payment attempt 'pending'.
+    if response.status_code >= 400:
+        raise PSPNetworkError(
+            f"PSP returned HTTP {response.status_code}: {response.text[:200]}"
+        )
+
+    body = response.json()
+
+    return PSPChargeResult(
+        status=body["status"],
+        psp_ref=body.get("psp_ref"),
+        # The mock PSP returns "code" on failures. Tolerate either field name.
+        code=body.get("code") or body.get("failure_code"),
+    )
